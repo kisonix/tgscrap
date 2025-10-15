@@ -6,18 +6,9 @@ Scrape channels listed in channels.txt, detect v2ray-style URIs inside
 message_text while parsing, and save the detected messages directly to
 raws/<channel_basename>.json (overwrite). No companion _config files.
 
-Each saved item keeps useful metadata for traceability and later polishing:
-{
-  "index": 1,
-  "post": "dingyue_Center/3701",
-  "time_iso": "2025-10-14T14:36:01+00:00",
-  "author": {"name": "...", "href": "...", "photo_src": "..."},
-  "source": "https://t.me/...",
-  "message_text": "...",
-  "message_html": "...",
-  "views": 567,
-  "reactions": [...]
-}
+Additionally: before scraping, remove any existing JSON files in raws/
+that don't correspond to the currently active channels in channels.txt.
+This ensures files for commented-out/removed channels are cleaned up.
 
 Usage:
   python3 main.py
@@ -276,6 +267,32 @@ def write_filtered_file(raws_dir: str, base: str, matched_items: List[Dict[str, 
 
 
 # ------------------------
+# Clean up stale JSON files in raws/ that are not in channels.txt
+# ------------------------
+def cleanup_stale_files(raws_dir: str, active_bases: set, verbose: bool = False) -> None:
+    """
+    Remove any .json file in raws_dir whose basename (without .json)
+    is not present in active_bases.
+    """
+    try:
+        all_files = os.listdir(raws_dir)
+    except Exception:
+        return
+
+    for fn in all_files:
+        if not fn.lower().endswith(".json"):
+            continue
+        base = fn[:-5]
+        if base not in active_bases:
+            path = os.path.join(raws_dir, fn)
+            try:
+                os.remove(path)
+                logging.info("Removed stale file: %s", path)
+            except Exception as e:
+                logging.warning("Failed to remove stale file %s: %s", path, e)
+
+
+# ------------------------
 # Main CLI
 # ------------------------
 def main():
@@ -303,8 +320,16 @@ def main():
     channels = [ln for ln in lines if ln and not ln.startswith("#")]
 
     if not channels:
-        logging.error("No channels found in %s", args.channels)
+        logging.info("No active channels in %s; cleaning all generated raws JSON files.", args.channels)
+        # remove all .json files in outdir because no active channels
+        cleanup_stale_files(args.outdir, active_bases=set(), verbose=args.verbose)
         return
+
+    # compute active basename set (used for cleanup)
+    active_bases = {sane_name_from_url(url) for url in channels}
+
+    # cleanup stale files for commented/removed channels
+    cleanup_stale_files(args.outdir, active_bases, verbose=args.verbose)
 
     session = create_session()
 
